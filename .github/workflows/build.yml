@@ -193,6 +193,19 @@ jobs:
           }
           $patched = $patched -replace [regex]::Escape('${GDAL_LIBRARY}'), 'GDAL::GDAL'
 
+          # OpenCV's own linking already had zero unresolved symbols in the 392-error dump
+          # (only GDAL's did) -- meaning find_package(OpenCV ... REQUIRED) is almost certainly
+          # already resolving via vcpkg's OpenCVConfig.cmake implicitly (CMake's default
+          # find_package behaviour falls through to Config mode when no bundled Find module
+          # exists for a package, which is the case for OpenCV4 via vcpkg). Make that explicit
+          # rather than relying on the implicit fallback, for the same robustness reason as
+          # the GDAL fix -- costs nothing, and OpenCV_LIBS' bare target names (opencv_core
+          # etc.) still resolve the same way either way.
+          if ($patched -notmatch [regex]::Escape('find_package(OpenCV HINTS "${OPENCV_DIR}" REQUIRED)')) {
+            throw "Expected to find the OpenCV find_package call to add CONFIG to it, but didn't"
+          }
+          $patched = $patched -replace [regex]::Escape('find_package(OpenCV HINTS "${OPENCV_DIR}" REQUIRED)'), 'find_package(OpenCV CONFIG HINTS "${OPENCV_DIR}" REQUIRED)'
+
           Set-Content -Path $path -Value $patched -NoNewline
           Write-Host "--- patched CMakeLists.txt (first 12 lines) ---"
           (Get-Content -Path $path)[0..11] | ForEach-Object { Write-Host $_ }
