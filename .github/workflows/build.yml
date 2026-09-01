@@ -127,6 +127,45 @@ jobs:
         with:
           arch: x64
 
+      # Two prior attempts to force /MT via CMake variables (CMAKE_MSVC_RUNTIME_LIBRARY +
+      # CMAKE_POLICY_DEFAULT_CMP0091=NEW, then also CMAKE_CXX_FLAGS_RELEASE) both failed
+      # identically -- Logger.cpp.obj still links as MD_DynamicRelease. Root cause: this
+      # file's FIRST line is `project(odm_orthophoto)`, with `cmake_minimum_required(VERSION
+      # 2.8)` only on line 2 -- AFTER project(), not before it (the normal, expected order).
+      # Policy settings and CMAKE_POLICY_DEFAULT_CMP0091 only affect the compiler/runtime
+      # detection that project() performs if they're in effect BEFORE that project() call;
+      # with nothing preceding it in the file, command-line policy defaults weren't reaching
+      # it. Patch the text directly instead of fighting this from the command line.
+      - name: Patch CMakeLists.txt to force /MT (project() has no preceding cmake_minimum_required to hook)
+        shell: pwsh
+        run: |
+          $path = "CMakeLists.txt"
+          $original = Get-Content -Path $path -Raw
+          Write-Host "--- original CMakeLists.txt (first 5 lines) ---"
+          ($original -split "`n")[0..4] | ForEach-Object { Write-Host $_ }
+
+          $prelude = @"
+cmake_minimum_required(VERSION 3.15)
+cmake_policy(SET CMP0091 NEW)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded`$<`$<CONFIG:Debug>:Debug>")
+
+"@
+          $patched = $prelude + $original
+
+          # Right after the (now second) project() line, force-replace any /MD the compiler
+          # defaults or vcpkg toolchain might still inject in these four flag variables.
+          $postProjectPatch = @"
+project(odm_orthophoto)
+foreach(f CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_C_FLAGS_RELEASE CMAKE_CXX_FLAGS_RELEASE)
+  string(REPLACE "/MD" "/MT" `${f} "`${`${f}}")
+endforeach()
+"@
+          $patched = $patched.Replace("project(odm_orthophoto)", $postProjectPatch)
+
+          Set-Content -Path $path -Value $patched -NoNewline
+          Write-Host "--- patched CMakeLists.txt (first 12 lines) ---"
+          (Get-Content -Path $path)[0..11] | ForEach-Object { Write-Host $_ }
+
       - name: Configure (CMake + Ninja + vcpkg toolchain)
         shell: pwsh
         run: |
@@ -157,10 +196,16 @@ jobs:
             -DEIGEN3_INCLUDE_DIR="$eigenInc"
           if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
-      - name: Build (Release)
+      - name: Build (Release, verbose -- fail fast if Logger.cpp isn't compiling /MT)
         shell: pwsh
         run: |
-          cmake --build build --parallel
+          cmake --build build --parallel -- -v 2>&1 | Tee-Object -FilePath build-verbose.log
+          $loggerLine = Select-String -Path build-verbose.log -Pattern "Logger\.cpp" | Select-Object -First 1
+          if (-not $loggerLine) { throw "Never even found a compile line for Logger.cpp in the verbose Ninja output -- can't confirm /MT took effect" }
+          Write-Host "Logger.cpp compile line: $($loggerLine.Line)"
+          if ($loggerLine.Line -notmatch "/MT\b") { throw "Logger.cpp compile line does not contain /MT -- the patch did not take effect: $($loggerLine.Line)" }
+          if ($loggerLine.Line -match "/MD\b") { throw "Logger.cpp compile line STILL contains /MD alongside /MT -- conflicting flags: $($loggerLine.Line)" }
+          Write-Host "Confirmed: Logger.cpp compiling with /MT, no /MD present."
           if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
 
       - name: Locate built exe + compute sha256
