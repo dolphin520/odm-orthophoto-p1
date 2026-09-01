@@ -43,7 +43,7 @@ jobs:
       - name: Verify pinned CMake version resolved (not the runner's default 4.x)
         shell: pwsh
         run: |
-          $v = cmake --version
+          $v = (cmake --version | Out-String)
           Write-Host $v
           if ($v -notmatch "3\.31\.6") { throw "cmake --version did not resolve to 3.31.6 -- PATH pin did not take effect: $v" }
 
