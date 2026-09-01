@@ -13,6 +13,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # windows-latest ships CMake 4.x, which dropped policy compatibility below 3.5
+      # entirely -- CMAKE_POLICY_VERSION_MINIMUM=3.5 alone can't restore a policy version
+      # the binary itself no longer knows about (confirmed: run 3 still failed inside
+      # vcpkg.cmake and GDAL/Eigen3/OpenCV's own *Targets.cmake with the same "Invalid
+      # CMAKE_POLICY_VERSION_MINIMUM" error). Pin an actual 3.31.x CMake instead and put
+      # it ahead of the runner's default on PATH.
+      - name: Pin CMake 3.31.6 (windows-latest's default is CMake 4.x, incompatible with this old CMakeLists.txt)
+        shell: pwsh
+        run: |
+          pip install cmake==3.31.6
+          if ($LASTEXITCODE -ne 0) { throw "pip install cmake==3.31.6 failed" }
+          # Find the actual cmake.exe pip just installed rather than trusting any one
+          # internal API of the cmake package (it's changed across versions before).
+          $sitePkgs = python -c "import site; print(site.getsitepackages()[0])"
+          Write-Host "site-packages: $sitePkgs"
+          $cmakeExe = Get-ChildItem -Path $sitePkgs -Recurse -Filter "cmake.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "cmake\\data\\bin" -or $_.FullName -match "cmake\\bin" } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $cmakeExe) {
+            # Fall back to a full scan if the expected subpath shape changed.
+            $cmakeExe = Get-ChildItem -Path $sitePkgs -Recurse -Filter "cmake.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $cmakeExe) { throw "pip installed cmake==3.31.6 but no cmake.exe found under $sitePkgs" }
+          $cmakeDir = Split-Path -Parent $cmakeExe
+          Write-Host "Pinned CMake bin dir: $cmakeDir ($cmakeExe)"
+          Add-Content -Path $env:GITHUB_PATH -Value $cmakeDir
+
+      - name: Verify pinned CMake version resolved (not the runner's default 4.x)
+        shell: pwsh
+        run: |
+          $v = cmake --version
+          Write-Host $v
+          if ($v -notmatch "3\.31\.6") { throw "cmake --version did not resolve to 3.31.6 -- PATH pin did not take effect: $v" }
+
       - name: Export GitHub Actions cache vars for vcpkg (x-gha binary cache)
         uses: actions/github-script@v7
         with:
