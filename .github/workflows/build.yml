@@ -147,6 +147,8 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            -DCMAKE_C_FLAGS_RELEASE="/MT /O2 /Ob2 /DNDEBUG" `
+            -DCMAKE_CXX_FLAGS_RELEASE="/MT /O2 /Ob2 /DNDEBUG" `
             -DVCPKG_MANIFEST_INSTALL=OFF `
             -DVCPKG_INSTALLED_DIR="$PWD\vcpkg_installed" `
             -DCMAKE_BUILD_TYPE=Release `
