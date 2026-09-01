@@ -173,6 +173,26 @@ jobs:
           }
           $patched = $patched -replace [regex]::Escape('cmake_minimum_required(VERSION 2.8)'), '# (neutralized by build.yml patch step -- see cmake_minimum_required(VERSION 3.15) above)'
 
+          # Static-triplet-only problem: link failed with 392 unresolved externals, all of
+          # them GDAL's OWN transitive static dependencies (GEOS, libtiff, PROJ, json-c, ...).
+          # A dynamic gdal.dll bundles/links those internally at DLL-build time, so the
+          # dynamic build never needed them named explicitly -- but a static gdal.lib is just
+          # an archive; nothing pulls its dependencies in unless CMake gets them from GDAL's
+          # own exported target. We were bypassing that by using the legacy find_package(GDAL
+          # REQUIRED) + raw ${GDAL_LIBRARY} variable (needed as a bridge for GDAL_INCLUDE_DIR
+          # in the first place). Switch to CONFIG mode + the GDAL::GDAL imported target, which
+          # carries vcpkg's correct transitive static link list automatically. (OpenCV's own
+          # linking is untouched -- OpenCV_LIBS already resolves via imported targets, and none
+          # of the 392 unresolved symbols were OpenCV's, only GDAL's.)
+          if ($patched -notmatch [regex]::Escape('find_package(GDAL REQUIRED)')) {
+            throw "Expected to find 'find_package(GDAL REQUIRED)' to switch it to CONFIG mode, but didn't"
+          }
+          $patched = $patched -replace [regex]::Escape('find_package(GDAL REQUIRED)'), 'find_package(GDAL CONFIG REQUIRED)'
+          if ($patched -notmatch [regex]::Escape('${GDAL_LIBRARY}')) {
+            throw "Expected to find the \${GDAL_LIBRARY} reference in target_link_libraries to swap for GDAL::GDAL, but didn't"
+          }
+          $patched = $patched -replace [regex]::Escape('${GDAL_LIBRARY}'), 'GDAL::GDAL'
+
           Set-Content -Path $path -Value $patched -NoNewline
           Write-Host "--- patched CMakeLists.txt (first 12 lines) ---"
           (Get-Content -Path $path)[0..11] | ForEach-Object { Write-Host $_ }
