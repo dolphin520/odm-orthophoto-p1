@@ -3,7 +3,12 @@ name: Build patched odm_orthophoto.exe (VicTerra P0 fix)
 on:
   push:
     branches: [ p1-patch, p1-patch-fast ]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      restore_run_id:
+        description: 'Prior run ID to restore vcpkg_installed/ from (skips the ~1hr vcpkg install). Leave empty for a clean build.'
+        required: false
+        type: string
 
 jobs:
   build-windows:
@@ -12,6 +17,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Optional fast path: restore a previously-built vcpkg_installed/ from an earlier run's
+      # artifact instead of rebuilding GDAL/Eigen3/OpenCV from source again (~1hr). Only runs
+      # when explicitly asked for via workflow_dispatch's restore_run_id input -- a plain push
+      # always does a clean vcpkg install, since we can't know in advance whether a prior run's
+      # artifact is even compatible with what changed.
+      - name: Restore vcpkg_installed/ from a prior run (optional)
+        if: github.event_name == 'workflow_dispatch' && inputs.restore_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: vcpkg-installed-x64
+          path: vcpkg_installed
+          run-id: ${{ inputs.restore_run_id }}
+          github-token: ${{ github.token }}
 
       # windows-latest ships CMake 4.x, which dropped policy compatibility below 3.5
       # entirely -- CMAKE_POLICY_VERSION_MINIMUM=3.5 alone can't restore a policy version
@@ -55,6 +74,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: vcpkg install (manifest mode, local install root, GHA binary cache)
+        if: hashFiles('vcpkg_installed/x64-windows/lib/gdal*.lib') == ''
         shell: pwsh
         env:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
@@ -63,6 +83,25 @@ jobs:
           Write-Host "VCPKG_INSTALLATION_ROOT=$vcpkgRoot"
           & "$vcpkgRoot\vcpkg.exe" install --triplet x64-windows --x-install-root=vcpkg_installed --x-manifest-root=. --feature-flags=manifests
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
+
+      - name: Confirm vcpkg_installed/ is usable (restored or freshly built)
+        shell: pwsh
+        run: |
+          $gdalLib = Get-ChildItem -Path "vcpkg_installed\x64-windows\lib" -Filter "gdal*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $gdalLib) { throw "vcpkg_installed/x64-windows/lib has no gdal*.lib -- restore or install did not produce a usable tree" }
+          Write-Host "vcpkg_installed looks usable: $($gdalLib.FullName)"
+
+      # Archive the freshly-built (or restored, harmless no-op re-upload) vcpkg_installed/ so a
+      # LATER run can restore it via workflow_dispatch's restore_run_id instead of rebuilding
+      # GDAL/Eigen3/OpenCV from source again. This is the expensive part (~1hr); everything
+      # after it (Configure/Build) is minutes, so this is the artifact worth saving.
+      - name: Archive vcpkg_installed/ for fast restore on a later run
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcpkg-installed-x64
+          path: vcpkg_installed/
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Resolve GDAL include/lib paths
         id: gdal
