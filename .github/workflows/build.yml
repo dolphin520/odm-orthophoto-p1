@@ -92,6 +92,16 @@ jobs:
         shell: pwsh
         run: |
           $toolchain = "$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+          # vcpkg's eigen3 port only exposes a modern imported target (Eigen3::Eigen) via
+          # Eigen3Config.cmake -- it does NOT set the legacy EIGEN3_INCLUDE_DIR variable this
+          # old CMakeLists.txt (`include_directories(${EIGEN3_INCLUDE_DIR})`) expects, so that
+          # expands to empty and every '#include <Eigen/Dense>' fails. Same class of gap as
+          # GDAL_INCLUDE_DIR/GDAL_LIBRARY above -- bridge it explicitly. Eigen headers live one
+          # level down, in include/eigen3, not include/ directly.
+          $eigenInc = "$PWD\vcpkg_installed\x64-windows\include\eigen3"
+          if (-not (Test-Path "$eigenInc\Eigen\Dense")) { throw "Expected Eigen headers at $eigenInc\Eigen but Dense wasn't found there" }
+          Write-Host "Eigen include dir: $eigenInc"
+
           cmake -B build -S . -G Ninja `
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
             -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
@@ -100,7 +110,8 @@ jobs:
             -DVCPKG_INSTALLED_DIR="$PWD\vcpkg_installed" `
             -DCMAKE_BUILD_TYPE=Release `
             -DGDAL_INCLUDE_DIR="${{ steps.gdal.outputs.inc }}" `
-            -DGDAL_LIBRARY="${{ steps.gdal.outputs.lib }}"
+            -DGDAL_LIBRARY="${{ steps.gdal.outputs.lib }}" `
+            -DEIGEN3_INCLUDE_DIR="$eigenInc"
           if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
       - name: Build (Release)
