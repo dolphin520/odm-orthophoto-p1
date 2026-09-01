@@ -27,7 +27,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.restore_run_id != ''
         uses: actions/download-artifact@v4
         with:
-          name: vcpkg-installed-x64
+          name: vcpkg-installed-x64-static
           path: vcpkg_installed
           run-id: ${{ inputs.restore_run_id }}
           github-token: ${{ github.token }}
@@ -74,21 +74,21 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: vcpkg install (manifest mode, local install root, GHA binary cache)
-        if: hashFiles('vcpkg_installed/x64-windows/lib/gdal*.lib') == ''
+        if: hashFiles('vcpkg_installed/x64-windows-static/lib/gdal*.lib') == ''
         shell: pwsh
         env:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
         run: |
           $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
           Write-Host "VCPKG_INSTALLATION_ROOT=$vcpkgRoot"
-          & "$vcpkgRoot\vcpkg.exe" install --triplet x64-windows --x-install-root=vcpkg_installed --x-manifest-root=. --feature-flags=manifests
+          & "$vcpkgRoot\vcpkg.exe" install --triplet x64-windows-static --x-install-root=vcpkg_installed --x-manifest-root=. --feature-flags=manifests
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
 
       - name: Confirm vcpkg_installed/ is usable (restored or freshly built)
         shell: pwsh
         run: |
-          $gdalLib = Get-ChildItem -Path "vcpkg_installed\x64-windows\lib" -Filter "gdal*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $gdalLib) { throw "vcpkg_installed/x64-windows/lib has no gdal*.lib -- restore or install did not produce a usable tree" }
+          $gdalLib = Get-ChildItem -Path "vcpkg_installed\x64-windows-static\lib" -Filter "gdal*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $gdalLib) { throw "vcpkg_installed/x64-windows-static/lib has no gdal*.lib -- restore or install did not produce a usable tree" }
           Write-Host "vcpkg_installed looks usable: $($gdalLib.FullName)"
 
       # Archive the freshly-built (or restored, harmless no-op re-upload) vcpkg_installed/ so a
@@ -98,7 +98,7 @@ jobs:
       - name: Archive vcpkg_installed/ for fast restore on a later run
         uses: actions/upload-artifact@v4
         with:
-          name: vcpkg-installed-x64
+          name: vcpkg-installed-x64-static
           path: vcpkg_installed/
           retention-days: 14
           if-no-files-found: error
@@ -107,7 +107,7 @@ jobs:
         id: gdal
         shell: pwsh
         run: |
-          $installRoot = "vcpkg_installed\x64-windows"
+          $installRoot = "vcpkg_installed\x64-windows-static"
           $incDir = Resolve-Path "$installRoot\include" | Select-Object -ExpandProperty Path
           $gdalLib = Get-ChildItem -Path "$installRoot\lib" -Filter "gdal*.lib" | Select-Object -First 1 -ExpandProperty FullName
           if (-not $gdalLib) { throw "Could not find a gdal*.lib under $installRoot\lib" }
@@ -137,14 +137,15 @@ jobs:
           # expands to empty and every '#include <Eigen/Dense>' fails. Same class of gap as
           # GDAL_INCLUDE_DIR/GDAL_LIBRARY above -- bridge it explicitly. Eigen headers live one
           # level down, in include/eigen3, not include/ directly.
-          $eigenInc = "$PWD\vcpkg_installed\x64-windows\include\eigen3"
+          $eigenInc = "$PWD\vcpkg_installed\x64-windows-static\include\eigen3"
           if (-not (Test-Path "$eigenInc\Eigen\Dense")) { throw "Expected Eigen headers at $eigenInc\Eigen but Dense wasn't found there" }
           Write-Host "Eigen include dir: $eigenInc"
 
           cmake -B build -S . -G Ninja `
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
             -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DVCPKG_MANIFEST_INSTALL=OFF `
             -DVCPKG_INSTALLED_DIR="$PWD\vcpkg_installed" `
             -DCMAKE_BUILD_TYPE=Release `
@@ -176,7 +177,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: odm_orthophoto-p1-windows-x64
+          name: odm_orthophoto-p1-windows-x64-static
           path: dist/
           if-no-files-found: error
 
