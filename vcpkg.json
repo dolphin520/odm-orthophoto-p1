@@ -1,0 +1,14 @@
+{
+  "name": "odm-orthophoto-p1",
+  "version-string": "355-p1",
+  "description": "OpenDroneMap odm_orthophoto (GIT_TAG 355) with the VicTerra P0 int32-overflow fix, built via GitHub Actions windows-latest for a native odm_orthophoto.exe.",
+  "dependencies": [
+    "eigen3",
+    "gdal",
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": ["highgui", "png", "tiff", "jpeg", "thread", "intrinsics"]
+    }
+  ]
+}

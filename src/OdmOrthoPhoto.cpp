@@ -492,7 +492,7 @@ void OdmOrthoPhoto::createOrthoPhoto()
         log_ << "Model resolution, width x height : " << width << "x" << height << '\n';
 
         // Check size of photo.
-        if(0 >= height*width)
+        if(0 >= static_cast<long long>(height) * static_cast<long long>(width))
         {
             if(0 >= height)
             {
@@ -953,26 +953,44 @@ void OdmOrthoPhoto::renderPixel(int row, int col, double s, double t, const cv::
     // The distance to the top and bottom pixel from the texture coordinate.
     double dr, db;
 
+    const int texCols = texture.cols;
+    const int texRows = texture.rows;
+
+    // Edge-clamp the sample position into the texture, so the left+1/top+1
+    // taps below can never run off the buffer. Without this, u == 1.0 /
+    // v == 0.0 land exactly on cols / rows.
+    s = std::min(std::max(s, 0.0), static_cast<double>(texCols - 1));
+    t = std::min(std::max(t, 0.0), static_cast<double>(texRows - 1));
+
     dl = modf(s, &leftF);
     dr = 1.0 - dl;
     dt = modf(t, &topF);
     db = 1.0 - dt;
 
-    left = static_cast<int>(leftF);
-    top = static_cast<int>(topF);
+    // leftF/topF are now in [0, dim-1]; pin the texel to [0, dim-2] so the
+    // +1 tap reads the edge texel instead of one past it.
+    left = std::max(0, std::min(static_cast<int>(leftF), texCols - 2));
+    top  = std::max(0, std::min(static_cast<int>(topF),  texRows - 2));
 
     // The interpolated color values.
     size_t idx = static_cast<size_t>(row) * static_cast<size_t>(width) + static_cast<size_t>(col);
     T *data = reinterpret_cast<T *>(texture.data); // Faster access
     int numChannels = texture.channels();
 
+    // Atlases with rows*cols*channels > INT32_MAX are valid inputs (e.g.
+    // 24114x32244x3); offsets into data must be computed in size_t. In int
+    // this wraps to a negative subscript and reads out of bounds.
+    const size_t rowStride = static_cast<size_t>(texCols) * static_cast<size_t>(numChannels);
+    const size_t tlOffset = static_cast<size_t>(top) * rowStride
+                          + static_cast<size_t>(left) * static_cast<size_t>(numChannels);
+
     for (int i = 0; i < numChannels; i++){
         double value = 0.0;
 
-        T tl = data[(top) * texture.cols * numChannels + (left) * numChannels + i];
-        T tr = data[(top) * texture.cols * numChannels + (left + 1) * numChannels + i];
-        T bl = data[(top + 1) * texture.cols * numChannels + (left) * numChannels + i];
-        T br = data[(top + 1) * texture.cols * numChannels + (left + 1) * numChannels + i];
+        T tl = data[tlOffset + i];
+        T tr = data[tlOffset + numChannels + i];
+        T bl = data[tlOffset + rowStride + i];
+        T br = data[tlOffset + rowStride + numChannels + i];
 
         value += static_cast<double>(tl) * dr * db;
         value += static_cast<double>(tr) * dl * db;
